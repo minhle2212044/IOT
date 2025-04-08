@@ -10,8 +10,8 @@
 #include "Wire.h"
 #include <ArduinoOTA.h>
 
-constexpr char WIFI_SSID[] = "Galaxy A114957";
-constexpr char WIFI_PASSWORD[] = "852004lcm";
+constexpr char WIFI_SSID[] = "Thu Cong_VNPT";
+constexpr char WIFI_PASSWORD[] = "0985655677";
 
 constexpr char TOKEN[] = "ElCQRtwf63oV7B1gYxlJ";
 
@@ -88,10 +88,8 @@ const Attribute_Request_Callback attribute_shared_request_callback(&processShare
 
 void InitWiFi() {
   Serial.println("Connecting to AP ...");
-  // Attempting to establish a connection to the given WiFi network
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
-    // Delay 500ms until a connection has been successfully established
     delay(500);
     Serial.print(".");
   }
@@ -99,18 +97,37 @@ void InitWiFi() {
 }
 
 const bool reconnect() {
-  // Check to ensure we aren't connected yet
   const wl_status_t status = WiFi.status();
   if (status == WL_CONNECTED) {
     return true;
   }
-  // If we aren't establish a new connection to the given WiFi network
   InitWiFi();
   return true;
 }
 
 TaskHandle_t readSensorTaskHandle = NULL;
-TaskHandle_t sendDataTaskHandle = NULL;
+TaskHandle_t Task1Handle = NULL;
+
+void Task1(void *pvParameters) {
+  for (;;) {
+    if (!tb.connected()) {
+      Serial.println("Connecting to ThingsBoard...");
+      if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
+        Serial.println("Failed to connect to ThingsBoard");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        continue;
+      }
+
+      tb.sendAttributeData("macAddress", WiFi.macAddress().c_str());
+      tb.RPC_Subscribe(callbacks.cbegin(), callbacks.cend());
+      tb.Shared_Attributes_Subscribe(attributes_callback);
+      tb.Shared_Attributes_Request(attribute_shared_request_callback);
+      Serial.println("Connected to ThingsBoard!");
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
 
 void readSensorTask(void *pvParameters) {
   while (true) {
@@ -125,36 +142,6 @@ void readSensorTask(void *pvParameters) {
       Serial.print(" °C, Humidity: ");
       Serial.print(humidity);
       Serial.println(" %");
-    }
-    
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-  }
-}
-
-void sendDataTask(void *pvParameters) {
-  while (true) {
-    if (!tb.connected()) {
-      Serial.print("Connecting to: ");
-      Serial.print(THINGSBOARD_SERVER);
-      Serial.print(" with token ");
-      Serial.println(TOKEN);
-      if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
-        Serial.println("Failed to connect");
-        return;
-      }
-    }
-    float temperature = dht.readTemperature();
-    float humidity = dht.readHumidity();
-
-    if (isnan(temperature) || isnan(humidity)) {
-      Serial.println("Failed to read from DHT11 sensor!");
-    } else {
-      Serial.print("Temperature: ");
-      Serial.print(temperature);
-      Serial.print(" °C, Humidity: ");
-      Serial.print(humidity);
-      Serial.println(" %");
-
       tb.sendTelemetryData("temperature", temperature);
       tb.sendTelemetryData("humidity", humidity);
     }
@@ -163,7 +150,6 @@ void sendDataTask(void *pvParameters) {
     tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
     tb.sendAttributeData("localIp", WiFi.localIP().toString().c_str());
     tb.sendAttributeData("ssid", WiFi.SSID().c_str());
-    // Delay before sending data again
     vTaskDelay(5000 / portTICK_PERIOD_MS);
   }
 }
@@ -171,16 +157,14 @@ void sendDataTask(void *pvParameters) {
 void setup() {
   Serial.begin(SERIAL_DEBUG_BAUD);
   pinMode(LED_PIN, OUTPUT);
-  delay(1000);
   InitWiFi();
 
   Wire.begin(SDA_PIN, SCL_PIN);
   dht.begin();
+  xTaskCreate(Task1, "Task1", 2048, NULL, 1, &Task1Handle);
   xTaskCreate(readSensorTask, "Read Sensor Task", 2048, NULL, 1, &readSensorTaskHandle);
-  xTaskCreate(sendDataTask, "Send Data Task", 2048, NULL, 2, &sendDataTaskHandle);
 }
 
 void loop() {
-
   tb.loop();
 }
